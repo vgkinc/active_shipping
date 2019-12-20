@@ -28,7 +28,8 @@ module ActiveShipping
       :us_rates => 'RateV4',
       :world_rates => 'IntlRateV2',
       :test => 'CarrierPickupAvailability',
-      :track => 'TrackV2'
+      :track => 'TrackV2',
+      :verify_address => 'Verify'
     }
     USE_SSL = {
       :us_rates => false,
@@ -80,13 +81,24 @@ module ActiveShipping
       :first_class => 'FIRST CLASS',
       :priority => 'PRIORITY',
       :express => 'EXPRESS',
+      :express_sh => 'EXPRESS SH',
       :bpm => 'BPM',
       :parcel => 'PARCEL',
       :media => 'MEDIA',
       :library => 'LIBRARY',
       :online => 'ONLINE',
       :plus => 'PLUS',
-      :all => 'ALL'
+      :all => 'ALL',
+      :online => 'ONLINE',
+      # Commercial rates
+      :first_class_commercial => 'FIRST CLASS COMMERCIAL',
+      :priority_commercial => 'PRIORITY COMMERCIAL',
+      :express_commercial => 'EXPRESS COMMERCIAL',
+      :express_sh_commercial => 'EXPRESS SH COMMERCIAL',
+      # Commercial Plus rates
+      :first_class_commercial_plus => 'FIRST CLASS HFP COMMERCIAL',
+      :priority_commercial_plus => 'PRIORITY HFP COMMERCIAL',
+      :express_commercial_plus => 'EXPRESS HFP COMMERCIAL'
     }
     DEFAULT_SERVICE = Hash.new(:all).update(
       :base => :online,
@@ -233,6 +245,27 @@ module ActiveShipping
 
     def maximum_weight
       Measured::Weight.new(70, :pounds)
+    end
+
+    def verify_address(destination)
+      destination = Location.from(destination)
+      # We only verify US addresses, proper
+      if destination.country_code(:alpha2) == 'US'
+        request = build_verify_address_request(destination)
+        response = commit(:verify_address, request, false)
+        parse_verify_address_response destination, response
+      else
+        country = COUNTRY_NAME_CONVERSIONS[destination.country.code(:alpha2).value] || destination.country.name
+        VerifyAddressResponse.new(true, '', {
+          :zip5 => destination.zip,
+          :state => destination.state,
+          :city => destination.city,
+          :address1 => destination.address1,
+          :address2 => destination.address2,
+          :company_name => destination.company_name,
+          :country => country
+        })
+      end
     end
 
     def extract_event_details(node)
@@ -435,6 +468,44 @@ module ActiveShipping
       save_request(xml_builder.to_xml)
     end
 
+    def build_verify_address_request(location)
+      request = XmlNode.new('AddressValidateRequest', :USERID => @options[:login]) do |av_request|
+        av_request << XmlNode.new('Address') do |address|
+          address << XmlNode.new('FirmName', location.company_name || '')
+          # NOTE: For some reason, USPS puts the apt as address1
+          address << XmlNode.new('Address1', location.address2 || '')
+          address << XmlNode.new('Address2', location.address1)
+          address << XmlNode.new('City', location.city)
+          address << XmlNode.new('State', location.state)
+          address << XmlNode.new('Zip5', location.zip5)
+          address << XmlNode.new('Zip4', location.zip4)
+        end
+      end
+      URI.encode(save_request(request.to_s))
+    end
+
+    def parse_verify_address_response(location, response)
+      success = true
+      message = ''
+      address = {}
+      xml = REXML::Document.new(response)
+      if !xml.elements['/AddressValidateResponse/Address/Error'].nil?
+        success = false
+        message = Hash.from_xml(xml.elements['/AddressValidateResponse/Address/Error/Description'].to_s)['Description']
+      else
+        returned_address = Hash.from_xml(xml.elements['/AddressValidateResponse/Address'].to_s)
+        returned_address['Address']['address1'] = returned_address['Address']['Address2']
+        returned_address['Address']['address2'] = returned_address['Address']['Address1']
+        returned_address['Address'].delete 'Address1'
+        returned_address['Address'].delete 'Address1'
+        returned_address['Address'].each{|k, v| address[k.gsub(/(.)([A-Z])/,'\1_\2').downcase.to_sym] = v}
+        address[:country] = "United States"
+        message = returned_address['Address']['ReturnText']
+      end
+      
+      VerifyAddressResponse.new(success, message, address)
+    end
+
     def parse_rate_response(origin, destination, packages, response, options = {})
       success = true
       message = ''
@@ -503,10 +574,16 @@ module ActiveShipping
           this_service = rate_hash[service_name] ||= {}
           this_service[:service_code] ||= service_response_node.attributes[service_code_node].value
           package_rates = this_service[:package_rates] ||= []
-          this_package_rate = {:package => this_package,
-                               :rate => Package.cents_from(rate_value(rate_node, service_response_node, commercial_type))}
-
-          package_rates << this_package_rate if package_valid_for_service(this_package, service_response_node)
+          if !service_response_node.get_text('CommercialRate').blank? and service_response_node.get_text('CommercialRate').to_s.to_f > 0.0
+            rate_node = 'CommercialRate'
+          end
+          # We don't want to return an empty rate; If we don't have any value, leave it out
+          unless service_response_node.get_text(rate_node).to_s.blank?
+            this_package_rate = {:package => this_package,
+                                 :rate => Package.cents_from(service_response_node.get_text(rate_node).to_s.to_f)}
+            
+            package_rates << this_package_rate if package_valid_for_service(this_package,service_response_node)
+          end
         end
       end
       rate_hash

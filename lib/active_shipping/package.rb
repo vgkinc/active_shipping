@@ -1,7 +1,16 @@
 module ActiveShipping #:nodoc:
   class Package
     cattr_accessor :default_options
-    attr_reader :options, :value, :currency
+    attr_reader :options, 
+                :value, 
+                :currency,
+                :cylinder,
+                :gift,
+                :large,
+                :irregular,
+                :shape,
+                :packaging_type
+    alias_method :package_type, :packaging_type
 
     # Package.new(100, [10, 20, 30], :units => :metric)
     # Package.new(Measured::Weight.new(100, :g), [10, 20, 30].map {|m| Length.new(m, :centimetres)})
@@ -41,6 +50,11 @@ module ActiveShipping #:nodoc:
       @currency = options[:currency] || (options[:value].currency if options[:value].respond_to?(:currency))
       @cylinder = (options[:cylinder] || options[:tube]) ? true : false
       @gift = options[:gift] ? true : false
+      @large = options[:large] ? true : false
+      @irregular = options[:irregular] ? true : false
+
+      @shape = options[:shape]
+      @packaging_type = options[:package_type] || options[:packaging_type]
       @oversized = options[:oversized] ? true : false
       @unpackaged = options[:unpackaged] ? true : false
     end
@@ -61,6 +75,8 @@ module ActiveShipping #:nodoc:
     def gift?
       @gift
     end
+    def irregular?; @irregular end
+    def large?; @large end
 
     def ounces(options = {})
       weight(options).convert_to(:oz).value.to_f
@@ -95,6 +111,7 @@ module ActiveShipping #:nodoc:
       measurement.nil? ? @centimetres : measure(measurement, @centimetres)
     end
     alias_method :cm, :centimetres
+    alias_method :centimeters, :centimetres
 
     def weight(options = {})
       case options[:type]
