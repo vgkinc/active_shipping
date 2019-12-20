@@ -27,3 +27,5 @@ require 'active_shipping/errors'
 require 'active_shipping/external_return_label_request'
 require 'active_shipping/external_return_label_response'
 require 'active_shipping/address_validation_response'
+
+autoload :XmlNode, 'vendor/xml_node/lib/xml_node'
