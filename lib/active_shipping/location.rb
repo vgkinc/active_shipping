@@ -58,7 +58,7 @@ module ActiveShipping #:nodoc:
       @postal_code = options[:postal_code] || options[:postal] || options[:zip]
       @province = options[:province] || options[:state] || options[:territory] || options[:region]
       # if a users submits a full state or province name
-      @province = STATES.has_value?(@province.downcase) ? STATES.index(@province.downcase).upcase : @province.upcase unless @province.blank?
+      @province = STATES.has_value?(@province.downcase) ? STATES.key(@province.downcase).upcase : @province.upcase unless @province.blank?
       # TODO: we could add a zipcode lookup here too, in the event that there's a misspelling/missing state
       # For now, we'll provide a method, so users can validate themselves
       @city = options[:city]
